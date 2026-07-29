@@ -191,5 +191,5 @@ static void patch_legacy_kuser_shared_data(void) {
     *(UINT32 *)(kuser + 0x264) = 1;
     *(UINT32 *)(kuser + 0x270) = 0;
 
-    MESSAGE("Initialized LADP legacy KUSER_SHARED_DATA profile.\n");
+    MESSAGE("Initialized legacy Reflex KUSER_SHARED_DATA profile.\n");
 }

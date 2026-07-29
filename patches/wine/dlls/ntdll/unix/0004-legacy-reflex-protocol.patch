@@ -125,7 +125,7 @@
 +
 +            case 0x69696969:
 +                LegacyTargetInitialized = 1;
-+                MESSAGE("Initialized LADP legacy CPUID protocol.\n");
++                MESSAGE("Initialized legacy Reflex CPUID protocol.\n");
                  break;
  
              case 0x336933:
