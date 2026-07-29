@@ -16,6 +16,7 @@ PATCH_REPO="https://github.com/brcly/proton-LinUwUx-patch.git"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCHES_DIR="${SCRIPT_DIR}/patches"
 FORCE=0
+LEGACY_REFLEX=0
 
 # -------------------- Colour output (off when not a terminal) --------------------
 if [[ -t 1 ]]; then
@@ -58,6 +59,7 @@ Examples:
 
 Options:
   -f, --force               Force full re-clone and clean rebuild
+  --legacy-reflex           Include the legacy Reflex compatibility protocol
   --container-engine=<name> Container engine to build with (default: podman)
   -h, --help                Show this help
 
@@ -75,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)   usage ;;
         -f|--force)  FORCE=1; shift ;;
+        --legacy-reflex) LEGACY_REFLEX=1; shift ;;
         --container-engine=*)
             CONTAINER_ENGINE="${1#--container-engine=}"
             [[ -n "$CONTAINER_ENGINE" ]] || die "--container-engine requires a value (e.g. --container-engine=docker)"
@@ -123,6 +126,7 @@ header "============================================================"
 header "  Proton + LinUwUx Builder v${VERSION}"
 header "  Variant     : $VARIANT"
 header "  Branch/Tag  : $BRANCH"
+header "  Legacy Reflex: $([[ $LEGACY_REFLEX -eq 1 ]] && echo enabled || echo disabled)"
 header "============================================================"
 pause
 
@@ -176,10 +180,14 @@ ensure_unshallow() {
 }
 
 VERSION_ID=$(compute_version_id "$BRANCH" "$VARIANT")
-SRC_DIR="${SCRIPT_DIR}/${VERSION_ID}-src"
-BUILD_DIR="${SCRIPT_DIR}/${VERSION_ID}-build"
-BUILD_NAME="${VERSION_ID}-LinUwUx"
-LOG_DIR="${SCRIPT_DIR}/logs/${VERSION_ID}"
+BUILD_FLAVOR=""
+if [[ $LEGACY_REFLEX -eq 1 ]]; then
+    BUILD_FLAVOR="-Legacy-Reflex"
+fi
+SRC_DIR="${SCRIPT_DIR}/${VERSION_ID}${BUILD_FLAVOR}-src"
+BUILD_DIR="${SCRIPT_DIR}/${VERSION_ID}${BUILD_FLAVOR}-build"
+BUILD_NAME="${VERSION_ID}-LinUwUx${BUILD_FLAVOR}"
+LOG_DIR="${SCRIPT_DIR}/logs/${VERSION_ID}${BUILD_FLAVOR}"
 
 info "Building version : $BRANCH"
 info "Source folder    : $SRC_DIR"
@@ -246,6 +254,13 @@ fi
 
 rm -rf patches/wine/loader
 
+if [[ $LEGACY_REFLEX -eq 1 ]]; then
+    LEGACY_REFLEX_PATCHES="${PATCHES_DIR}/legacy-reflex/wine"
+    [[ -d "$LEGACY_REFLEX_PATCHES" ]] || die "Legacy Reflex patch directory not found: $LEGACY_REFLEX_PATCHES"
+    info "Adding legacy Reflex patch set"
+    cp -r "$LEGACY_REFLEX_PATCHES/." patches/wine/
+fi
+
 [[ -n "$(find patches/wine -name '*.patch' 2>/dev/null)" ]] \
     || die "No patch files found under patches/wine/ - check $PATCHES_DIR"
 
@@ -311,23 +326,22 @@ EOF
     fi
 }
 
-apply_cpuid_spoof_definitions_fix() {
-    local wine_dir="$1"
+apply_cpuid_definitions_fix() {
+    local wine_dir="$1" defs_file="$2" marker="$3" label="$4"
     local target="${wine_dir}/dlls/ntdll/unix/signal_x86_64.c"
-    local defs_file="${PATCHES_DIR}/base/cpuid_spoof_defs.c"
 
-    info "Applying CPUID spoof definitions to $target ..."
+    info "Applying $label to $target ..."
     [[ -f "$target" ]] || die "$target not found - wine's layout may have changed upstream"
     [[ -f "$defs_file" ]] || die "$defs_file not found - patch repo structure may have changed"
 
-    if grep -q '^uint64_t TargetSysHandler' "$target"; then
+    if grep -q "$marker" "$target"; then
         info "  Already present"
         return
     fi
 
     local anchor_line
     anchor_line=$(grep -n '^struct xcontext' "$target" | head -1 | cut -d: -f1)
-    [[ -n "$anchor_line" ]] || die "Anchor 'struct xcontext' not found in $target - wine's layout may have changed upstream"
+    [[ -n "$anchor_line" ]] || die "Anchor 'struct xcontext' not found - wine's layout may have changed upstream"
 
     local tmp
     tmp=$(mktemp)
@@ -336,6 +350,16 @@ apply_cpuid_spoof_definitions_fix() {
         { print }
     ' "$target" > "$tmp" && mv "$tmp" "$target"
     info "  Inserted definitions before line $anchor_line (struct xcontext)"
+}
+
+apply_cpuid_definitions() {
+    local wine_dir="$1"
+    apply_cpuid_definitions_fix "$wine_dir" "$PATCHES_DIR/base/cpuid_spoof_defs.c" \
+        '^uint64_t TargetSysHandler$' "CPUID spoof definitions"
+    if [[ $LEGACY_REFLEX -eq 1 ]]; then
+        apply_cpuid_definitions_fix "$wine_dir" "$PATCHES_DIR/legacy-reflex/base/cpuid_legacy_reflex_defs.c" \
+            '^uint64_t LegacyQuerySystemInformationHandler$' "legacy Reflex definitions"
+    fi
 }
 
 apply_patch_file() {
@@ -411,13 +435,13 @@ if [[ "$VARIANT" == "ge" ]]; then
     pause
     apply_regedit_fix "wine"
     apply_faketime_protocol_fix "wine"
-    apply_cpuid_spoof_definitions_fix "wine"
+    apply_cpuid_definitions "wine"
     apply_linuwux_patches "wine"
 else
     info "CachyOS – applying LinUwUx patches directly rather than trusting CachyOS's own auto-apply"
     apply_regedit_fix "wine"
     apply_faketime_protocol_fix "wine"
-    apply_cpuid_spoof_definitions_fix "wine"
+    apply_cpuid_definitions "wine"
     apply_linuwux_patches "wine"
     find patches/wine -name '*.patch' -delete
 fi
