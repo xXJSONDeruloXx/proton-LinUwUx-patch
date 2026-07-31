@@ -122,7 +122,13 @@
 
             case 0x1337:
                 if (LegacyTargetInitialized) {
-                    patch_legacy_kuser_shared_data();
+                    if (LegacyQuerySystemInformationHandler &&
+                        LegacyQuerySystemInformationId == 0xffffffff &&
+                        LegacyQueryFullAttributesFileId == 0xffffffff &&
+                        !LegacyQueryFullAttributesFileHandler)
+                        patch_single_handler_legacy_kuser_shared_data();
+                    else
+                        patch_legacy_kuser_shared_data();
                     break;
                 }
                 /* Modern Reflex also emits this leaf; use normal CPUID then. */

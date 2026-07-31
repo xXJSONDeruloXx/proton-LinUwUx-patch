@@ -76,7 +76,8 @@ plus the common `patches/wine/` set, and optionally
 `patches/overrides/<branch-or-tag>/wine/` for version-specific patch sets.
 
 `--legacy-reflex` additionally selects the legacy CPUID handler and SIGSYS
-routing content under `patches/legacy-reflex/base/`. This is opt-in: normal
+routing content under `patches/legacy-reflex/base/`. It detects both the
+dual-route and older single-handler legacy protocols. This is opt-in: normal
 builds do not contain the legacy Reflex protocol.
 
 > Valve's official Proton is intentionally **not** supported (debugger-detection issues).

@@ -9,6 +9,14 @@
         else if (syscall_id == LegacyQueryFullAttributesFileId &&
                  ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
             target = LegacyQueryFullAttributesFileHandler;
+        /* Older legacy Reflex registers one target and issues two invalid
+         * syscall IDs. Other syscalls stay on Wine's normal SIGSYS path. */
+        else if (LegacyQuerySystemInformationHandler &&
+                 LegacyQuerySystemInformationId == 0xffffffff &&
+                 LegacyQueryFullAttributesFileId == 0xffffffff &&
+                 !LegacyQueryFullAttributesFileHandler &&
+                 (syscall_id == 0x13371337 || syscall_id == 0x13371338))
+            target = LegacyQuerySystemInformationHandler;
 
         if (target) {
             xmm_regs[4] = syscall_id;

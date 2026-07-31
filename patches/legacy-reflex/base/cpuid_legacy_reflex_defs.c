@@ -42,3 +42,28 @@ static void patch_legacy_kuser_shared_data(void) {
 
     MESSAGE("Initialized legacy Reflex KUSER_SHARED_DATA profile.\n");
 }
+
+/* Older SimpleSvm uses a smaller KUSER_SHARED_DATA profile. */
+static void patch_single_handler_legacy_kuser_shared_data(void) {
+    UINT8 *kuser = (UINT8 *)0x000000007ffe0000UL;
+    size_t size = sysconf(_SC_PAGESIZE);
+
+    if (mprotect(kuser, size, PROT_READ | PROT_WRITE) == -1) {
+        MESSAGE("Failed to make single-handler KUSER_SHARED_DATA writable: %s\n", strerror(errno));
+        return;
+    }
+
+    *(UINT32 *)(kuser + 0x2d6) = 0x00010034;
+    *(UINT32 *)(kuser + 0x2e8) = 0x00bf9c8f;
+    *(UINT32 *)(kuser + 0x3c0) = 0x00000010;
+    *(UINT32 *)(kuser + 0x288) = 0x01010101;
+    *(UINT32 *)(kuser + 0x268) = 0x00090001;
+    *(UINT32 *)(kuser + 0x2f4) = 0x0;
+    *(UINT32 *)(kuser + 0x264) = 0x1;
+    *(UINT32 *)(kuser + 0x2d0) = 0x00000310;
+    *(UINT32 *)(kuser + 0x260) = 0x00006658;
+    *(UINT32 *)(kuser + 0x26c) = 0x0a;
+    *(UINT32 *)(kuser + 0x270) = 0x0;
+
+    MESSAGE("Initialized single-handler legacy KUSER_SHARED_DATA profile.\n");
+}
