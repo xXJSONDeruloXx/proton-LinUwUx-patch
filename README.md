@@ -2,6 +2,8 @@
 
 `liblinuwux.so` — an `LD_PRELOAD` library that applies the **LinUwUx** DenuvOwO hypervisor-bypass set under **GE-Proton** or **CachyOS Proton**. No Proton/Wine source patches, no prefix registry imports, no launcher script rewrites.
 
+`liblinuwux-legacy.so` is an opt-in artifact for games using the legacy Reflex protocol. It includes the additional legacy CPUID/SIGSYS compatibility hooks; keep it selected per game rather than preloading it globally.
+
 **Official Valve Proton is not supported.** Use GE-Proton or CachyOS Proton.
 
 This project does **not** set up host-side requirements (UMIP, HV DKMS, etc.) — see [cs.rin.ru](https://csrin.org) for those.
@@ -14,7 +16,7 @@ This project does **not** set up host-side requirements (UMIP, HV DKMS, etc.) �
 curl -fsSL https://raw.githubusercontent.com/brcly/linuwux-runtime/main/install.sh | sh
 ```
 
-Installs `~/.local/lib/liblinuwux.so` and `~/.local/bin/linuwux`.
+Installs both libraries under `~/.local/lib` and the `linuwux` / `linuwux-legacy` wrappers under `~/.local/bin`.
 
 **From source** (needs `git`, `gcc`):
 
@@ -22,7 +24,13 @@ Installs `~/.local/lib/liblinuwux.so` and `~/.local/bin/linuwux`.
 ./build.sh --install
 ```
 
-Same destinations; plain `./build.sh` afterward refreshes the installed `.so`.
+To also install the legacy artifact and wrapper:
+
+```bash
+./build.sh --legacy-reflex --install
+```
+
+Plain builds refresh the corresponding installed artifact when it already exists.
 
 ## Launch (Steam example)
 
@@ -31,6 +39,14 @@ Per **game** launch options — not the whole Steam/Lutris UI (`~/.local/bin` on
 ```text
 linuwux %command%
 ```
+
+For a legacy Reflex game, use the isolated compatibility artifact:
+
+```text
+linuwux-legacy %command%
+```
+
+The modern artifact is the default. Known legacy examples include SMT V and Yakuza 3 RE; Elliot remains on the modern artifact.
 
 If a GUI app (e.g. Steam) was already running when you fixed `PATH`, restart it once — or use `~/.local/bin/linuwux %command%` until you do.
 
@@ -76,4 +92,4 @@ Parts of the docs and in-source comments were drafted with AI assistance, then r
 
 - LinUwUx — original bypass creator  
 - DenuvOwO — hypervisor bypass  
-- [Kurt Himebauch](https://github.com/xXJSONDeruloXx) — legacy Reflex fix (historical; not used by the current LD_PRELOAD design)
+- [Kurt Himebauch](https://github.com/xXJSONDeruloXx) — legacy Reflex compatibility

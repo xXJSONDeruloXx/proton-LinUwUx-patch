@@ -35,11 +35,13 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx);
  * blocked syscalls once armed. 0 == not armed yet. */
 uint64_t linuwux_cpuid_target_sys_handler(void);
 
+#ifdef LINUWUX_LEGACY_REFLEX
 int linuwux_cpuid_legacy_reflex_initialized(void);
 uint64_t linuwux_cpuid_legacy_reflex_single_handler(void);
 int linuwux_cpuid_legacy_reflex_dual(void);
 uint32_t linuwux_cpuid_legacy_reflex_query_system_id(void);
 uint64_t linuwux_cpuid_legacy_reflex_query_full_handler(void);
 uint32_t linuwux_cpuid_legacy_reflex_query_full_id(void);
+#endif
 
 #endif /* LINUWUX_CPUID_H */

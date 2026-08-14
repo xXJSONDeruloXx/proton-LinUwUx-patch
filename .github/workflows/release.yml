@@ -14,20 +14,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build liblinuwux.so stamped with the tag version
+      - name: Build modern and legacy libraries stamped with the tag version
         run: |
           LINUWUX_VERSION_OVERRIDE="${GITHUB_REF_NAME#v}" ./build.sh
+          LINUWUX_VERSION_OVERRIDE="${GITHUB_REF_NAME#v}" ./build.sh --legacy-reflex
           cp src/linuwux.sh dist/linuwux.sh
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum liblinuwux.so linuwux.sh > SHA256SUMS
+        run: sha256sum liblinuwux.so liblinuwux-legacy.so linuwux.sh > SHA256SUMS
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/liblinuwux.so
+            dist/liblinuwux-legacy.so
             dist/linuwux.sh
             dist/SHA256SUMS
           generate_release_notes: true
@@ -38,10 +40,16 @@ jobs:
             curl -fsSL https://raw.githubusercontent.com/brcly/linuwux-runtime/main/install.sh | sh
             ```
 
-            Downloads `liblinuwux.so` and the `linuwux` wrapper from this release into `~/.local/lib` / `~/.local/bin`, verifies the checksum, done. No `git clone`, no compiler.
+            Downloads both `liblinuwux.so` and the opt-in `liblinuwux-legacy.so`, plus the `linuwux` wrapper, into `~/.local/lib` / `~/.local/bin`, verifies the checksums, done. No `git clone`, no compiler.
 
             Steam launch option:
 
             ```
             ~/.local/bin/linuwux %command%
+            ```
+
+            Legacy Reflex games can use:
+
+            ```
+            ~/.local/bin/linuwux-legacy %command%
             ```

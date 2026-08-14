@@ -29,7 +29,9 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#ifdef LINUWUX_LEGACY_REFLEX
 #include <string.h>
+#endif
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
@@ -51,9 +53,11 @@ typedef long (*prctl_fn)(int, unsigned long, unsigned long, unsigned long, unsig
 
 static sigaction_fn real_sigaction;
 static prctl_fn real_prctl;
+#ifdef LINUWUX_LEGACY_REFLEX
 static void (*real_free)(void *);
 static _Thread_local int resolving_free;
 static _Thread_local void *last_win32u_free;
+#endif
 
 /* Only sa_sigaction is chained; store it atomically to avoid torn struct copies. */
 typedef void (*linuwux_sig_handler_fn)(int, siginfo_t *, void *);
@@ -97,6 +101,7 @@ static void linuwux_sigsys_wrapper(int sig, siginfo_t *info, void *uctx)
     linuwux_chain_sigsys(sig, info, uctx);
 }
 
+#ifdef LINUWUX_LEGACY_REFLEX
 __attribute__((visibility("default")))
 void free(void *ptr)
 {
@@ -131,6 +136,7 @@ void free(void *ptr)
     if (real_free)
         real_free(ptr);
 }
+#endif
 
 /* Enable CPUID faults once; TIF_NOCPUID is inherited by new threads on clone. */
 static void linuwux_enable_cpuid_fault(void)

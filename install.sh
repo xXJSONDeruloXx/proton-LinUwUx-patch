@@ -16,7 +16,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# install.sh -- fetches the latest liblinuwux.so release and installs it.
+# install.sh -- fetches the latest LinUwUx libraries and installs them.
 # No git clone, no gcc, no compiler toolchain required. Run via:
 #   curl -fsSL https://raw.githubusercontent.com/brcly/linuwux-runtime/main/install.sh | sh
 #
@@ -46,6 +46,7 @@ fi
 
 echo "==> Downloading latest liblinuwux release..."
 curl -fsSL -o "${TMPDIR}/liblinuwux.so" "${BASE_URL}/liblinuwux.so"
+curl -fsSL -o "${TMPDIR}/liblinuwux-legacy.so" "${BASE_URL}/liblinuwux-legacy.so"
 curl -fsSL -o "${TMPDIR}/linuwux.sh" "${BASE_URL}/linuwux.sh"
 curl -fsSL -o "${TMPDIR}/SHA256SUMS" "${BASE_URL}/SHA256SUMS"
 
@@ -57,19 +58,24 @@ fi
 
 mkdir -p "$LIBDIR" "$BINDIR"
 cp -f "${TMPDIR}/liblinuwux.so" "${LIBDIR}/liblinuwux.so"
+cp -f "${TMPDIR}/liblinuwux-legacy.so" "${LIBDIR}/liblinuwux-legacy.so"
 cp -f "${TMPDIR}/linuwux.sh" "${BINDIR}/linuwux"
+cp -f "${TMPDIR}/linuwux.sh" "${BINDIR}/linuwux-legacy"
 chmod 0755 "${BINDIR}/linuwux"
+chmod 0755 "${BINDIR}/linuwux-legacy"
 
 echo
 echo "============================================================"
 echo "  INSTALL SUCCESSFUL"
 echo "============================================================"
 echo "  Library  : ${LIBDIR}/liblinuwux.so"
-echo "  Wrapper  : ${BINDIR}/linuwux"
+echo "  Legacy   : ${LIBDIR}/liblinuwux-legacy.so"
+echo "  Wrappers : ${BINDIR}/linuwux, ${BINDIR}/linuwux-legacy"
 echo "============================================================"
 echo
 echo "Steam launch options for any GE-Proton / CachyOS game:"
 echo "  ${BINDIR}/linuwux %command%"
+echo "  ${BINDIR}/linuwux-legacy %command%  # legacy Reflex games"
 echo
 case ":$PATH:" in
     *":${BINDIR}:"*)

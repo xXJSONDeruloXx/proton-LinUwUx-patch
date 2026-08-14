@@ -20,11 +20,16 @@ jobs:
       - name: Shellcheck
         run: shellcheck build.sh install.sh src/linuwux.sh
 
-      - name: Build liblinuwux.so (-Wall -Wextra)
+      - name: Build modern liblinuwux.so (-Wall -Wextra)
         run: gcc -std=gnu11 -O2 -fPIC -fvisibility=hidden -shared -Wall -Wextra -o /tmp/strict-check.so src/linuwux.c src/modules/*.c -ldl
 
+      - name: Build legacy liblinuwux-legacy.so (-Wall -Wextra)
+        run: gcc -std=gnu11 -O2 -fPIC -fvisibility=hidden -shared -Wall -Wextra -DLINUWUX_LEGACY_REFLEX=1 -o /tmp/strict-legacy-check.so src/linuwux.c src/modules/*.c -ldl
+
       - name: Build via build.sh
-        run: ./build.sh
+        run: |
+          ./build.sh
+          ./build.sh --legacy-reflex
 
       - name: Verify export surface stays exactly the 4 interposed libc symbols
         run: |
@@ -38,9 +43,23 @@ jobs:
           echo "Export surface OK:"
           echo "$exports"
 
+      - name: Verify legacy export surface adds only free
+        run: |
+          exports=$(nm -D dist/liblinuwux-legacy.so | awk '$2=="T"{print $3}' | sort)
+          expected=$(printf '%s\n' clock_gettime free gettimeofday prctl sigaction | sort)
+          if [ "$exports" != "$expected" ]; then
+            echo "::error::Unexpected legacy exported symbols"
+            diff <(echo "$expected") <(echo "$exports")
+            exit 1
+          fi
+          echo "Legacy export surface OK:"
+          echo "$exports"
+
       - name: Smoke test --install and --version
         run: |
           export HOME="${RUNNER_TEMP}/fakehome"
           mkdir -p "$HOME"
           ./build.sh --install
+          ./build.sh --legacy-reflex --install
           "${HOME}/.local/bin/linuwux" --version
+          "${HOME}/.local/bin/linuwux-legacy" --version

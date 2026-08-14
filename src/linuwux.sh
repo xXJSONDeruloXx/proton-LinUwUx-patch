@@ -16,12 +16,16 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# linuwux -- launch helper for liblinuwux.so
+# linuwux -- launch helper for the selected LinUwUx library
 #
-# Installed to ~/.local/bin/linuwux by build.sh --install. Steam launch
-# option: ~/.local/bin/linuwux %command%
+# Installed to ~/.local/bin by build.sh --install. Use the
+# linuwux-legacy name for the opt-in legacy artifact.
 
-lib="${LINUWUX_PRELOAD:-${HOME}/.local/lib/liblinuwux.so}"
+case "${0##*/}" in
+    linuwux-legacy) default_lib="${HOME}/.local/lib/liblinuwux-legacy.so" ;;
+    *)               default_lib="${HOME}/.local/lib/liblinuwux.so" ;;
+esac
+lib="${LINUWUX_PRELOAD:-$default_lib}"
 
 if [ "${1-}" = "--version" ] || [ "${1-}" = "-V" ]; then
     if [ ! -f "$lib" ]; then
