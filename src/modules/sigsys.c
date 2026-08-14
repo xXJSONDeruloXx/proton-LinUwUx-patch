@@ -55,6 +55,8 @@ int linuwux_sigsys_route(ucontext_t *ctx)
     __uint128_t *xmm_regs;
     unsigned long long syscall_nr, rip, resume, target_sys_handler;
     unsigned long long legacy_target_sys_handler;
+    unsigned long long legacy_full_target;
+    unsigned int legacy_system_id, legacy_full_id;
     int legacy_route = 0;
     unsigned char *fault_ip, opcode0, opcode1;
 
@@ -75,9 +77,27 @@ int linuwux_sigsys_route(ucontext_t *ctx)
     if (!target_sys_handler && linuwux_cpuid_legacy_reflex_initialized())
     {
         legacy_target_sys_handler = linuwux_cpuid_legacy_reflex_single_handler();
-        if (legacy_target_sys_handler &&
-            ((uint32_t)syscall_nr == 0x13371337 || (uint32_t)syscall_nr == 0x13371338) &&
-            ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
+        if (linuwux_cpuid_legacy_reflex_dual())
+        {
+            legacy_system_id = linuwux_cpuid_legacy_reflex_query_system_id();
+            legacy_full_target = linuwux_cpuid_legacy_reflex_query_full_handler();
+            legacy_full_id = linuwux_cpuid_legacy_reflex_query_full_id();
+            if (legacy_target_sys_handler &&
+                (uint32_t)syscall_nr == legacy_system_id &&
+                legacy_system_id != 0xffffffff &&
+                ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL &&
+                !ctx->uc_mcontext.gregs[REG_R10])
+                target_sys_handler = legacy_target_sys_handler;
+            else if (legacy_full_target &&
+                     (uint32_t)syscall_nr == legacy_full_id &&
+                     legacy_full_id != 0xffffffff &&
+                     ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
+                target_sys_handler = legacy_full_target;
+            legacy_route = target_sys_handler != 0;
+        }
+        else if (legacy_target_sys_handler &&
+                 ((uint32_t)syscall_nr == 0x13371337 || (uint32_t)syscall_nr == 0x13371338) &&
+                 ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
         {
             target_sys_handler = legacy_target_sys_handler;
             legacy_route = 1;

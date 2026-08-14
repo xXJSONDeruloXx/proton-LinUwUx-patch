@@ -37,5 +37,9 @@ uint64_t linuwux_cpuid_target_sys_handler(void);
 
 int linuwux_cpuid_legacy_reflex_initialized(void);
 uint64_t linuwux_cpuid_legacy_reflex_single_handler(void);
+int linuwux_cpuid_legacy_reflex_dual(void);
+uint32_t linuwux_cpuid_legacy_reflex_query_system_id(void);
+uint64_t linuwux_cpuid_legacy_reflex_query_full_handler(void);
+uint32_t linuwux_cpuid_legacy_reflex_query_full_id(void);
 
 #endif /* LINUWUX_CPUID_H */

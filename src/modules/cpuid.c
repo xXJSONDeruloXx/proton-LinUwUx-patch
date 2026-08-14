@@ -42,6 +42,10 @@ static _Atomic uint64_t g_target_sys_handler = 0;
 
 static _Atomic int g_legacy_reflex_initialized = 0;
 static _Atomic uint64_t g_legacy_reflex_single_handler = 0;
+static _Atomic int g_legacy_reflex_dual = 0;
+static _Atomic uint32_t g_legacy_reflex_query_system_id = 0xffffffff;
+static _Atomic uint64_t g_legacy_reflex_query_full_handler = 0;
+static _Atomic uint32_t g_legacy_reflex_query_full_id = 0xffffffff;
 
 /* Filled once in the constructor before any other thread exists. */
 static unsigned int g_spoof_leaf1_eax, g_spoof_leaf1_ebx, g_spoof_leaf1_ecx, g_spoof_leaf1_edx;
@@ -61,6 +65,26 @@ int linuwux_cpuid_legacy_reflex_initialized(void)
 uint64_t linuwux_cpuid_legacy_reflex_single_handler(void)
 {
     return atomic_load(&g_legacy_reflex_single_handler);
+}
+
+int linuwux_cpuid_legacy_reflex_dual(void)
+{
+    return atomic_load(&g_legacy_reflex_dual);
+}
+
+uint32_t linuwux_cpuid_legacy_reflex_query_system_id(void)
+{
+    return atomic_load(&g_legacy_reflex_query_system_id);
+}
+
+uint64_t linuwux_cpuid_legacy_reflex_query_full_handler(void)
+{
+    return atomic_load(&g_legacy_reflex_query_full_handler);
+}
+
+uint32_t linuwux_cpuid_legacy_reflex_query_full_id(void)
+{
+    return atomic_load(&g_legacy_reflex_query_full_id);
 }
 
 void linuwux_detect_cpu_vendor(void)
@@ -213,6 +237,54 @@ static void linuwux_patch_legacy_single_kuser_shared_data(void)
     linuwux_log("legacy single-handler KUSER_SHARED_DATA profile: patched\n");
 }
 
+static void linuwux_patch_legacy_dual_kuser_shared_data(void)
+{
+    uint8_t *kuser = (uint8_t *)LINUWUX_KUSER_SHARED_DATA_ADDR;
+    long page_size_long = sysconf(_SC_PAGESIZE);
+    size_t page_size;
+    void *page_start;
+
+    if (page_size_long <= 0)
+    {
+        linuwux_log("legacy kuser_shared_data: sysconf(_SC_PAGESIZE) failed\n");
+        return;
+    }
+    page_size = (size_t)page_size_long;
+    page_start = (void *)((uintptr_t)LINUWUX_KUSER_SHARED_DATA_ADDR & ~(page_size - 1));
+
+    if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1)
+    {
+        linuwux_log("legacy kuser_shared_data: mprotect failed: %s\n", strerror(errno));
+        return;
+    }
+
+    *(uint64_t *)(kuser + 0x26e) = 0;
+    *(uint64_t *)(kuser + 0x283) = 0x0101010000010000ULL;
+    *(uint64_t *)(kuser + 0x288) = 0x01010101ULL;
+    *(uint64_t *)(kuser + 0x268) = 0x0a00090001ULL;
+    *(uint64_t *)(kuser + 0x261) = 0x0100000001000066ULL;
+    *(uint64_t *)(kuser + 0x272) = 0x010100000000ULL;
+    *(uint32_t *)(kuser + 0x3c0) = 0x10;
+    *(uint64_t *)(kuser + 0x260) = 0x0100006658ULL;
+    *(uint64_t *)(kuser + 0x282) = 0x0101000001000001ULL;
+    *(uint32_t *)(kuser + 0x2d0) = 0x0110;
+    *(uint32_t *)(kuser + 0x2e8) = 0x7fb10b;
+    *(uint32_t *)(kuser + 0x378) = 0;
+    *(uint64_t *)(kuser + 0x2e8) = 0x0100007fb10bULL;
+    *(uint64_t *)(kuser + 0x273) = 0x0100000101000000ULL;
+    *(uint64_t *)(kuser + 0x2d0) = 0x320a0000000110ULL;
+    *(uint64_t *)(kuser + 0x000) = 0x0fa0000000000000ULL;
+    *(uint64_t *)(kuser + 0x281) = 0x0100000100000101ULL;
+    *(uint64_t *)(kuser + 0x378) = 0x0100000000ULL;
+    *(uint64_t *)(kuser + 0x3c0) = 0x83000100000010ULL;
+    *(uint64_t *)(kuser + 0x26c) = 0x0a;
+    *(uint32_t *)(kuser + 0x2f4) = 0;
+    *(uint32_t *)(kuser + 0x264) = 1;
+    *(uint32_t *)(kuser + 0x270) = 0;
+
+    linuwux_log("legacy dual-handler KUSER_SHARED_DATA profile: patched\n");
+}
+
 /* Real CPUID with faulting briefly disabled. */
 static void linuwux_cpuid_passthrough(ucontext_t *ctx, unsigned int leaf, unsigned int subleaf)
 {
@@ -233,6 +305,9 @@ static void linuwux_cpuid_passthrough(ucontext_t *ctx, unsigned int leaf, unsign
 #define LINUWUX_CPUID_LEAF_FAKETIME 0x336967
 #define LINUWUX_CPUID_LEAF_LEGACY_INIT  0x69696969
 #define LINUWUX_CPUID_LEAF_LEGACY_KUSER 0x1337
+#define LINUWUX_CPUID_LEAF_LEGACY_QUERY_SYSTEM_ID 0x336943
+#define LINUWUX_CPUID_LEAF_LEGACY_QUERY_FULL_HANDLER 0x336934
+#define LINUWUX_CPUID_LEAF_LEGACY_QUERY_FULL_ID 0x336944
 
 int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
 {
@@ -346,7 +421,9 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
     case LINUWUX_CPUID_LEAF_LEGACY_KUSER:
         if (atomic_load(&g_legacy_reflex_initialized))
         {
-            if (atomic_load(&g_legacy_reflex_single_handler))
+            if (atomic_load(&g_legacy_reflex_dual))
+                linuwux_patch_legacy_dual_kuser_shared_data();
+            else if (atomic_load(&g_legacy_reflex_single_handler))
                 linuwux_patch_legacy_single_kuser_shared_data();
             else
                 linuwux_log("legacy KUSER_SHARED_DATA leaf arrived before handler registration\n");
@@ -375,6 +452,39 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
         ctx->uc_mcontext.gregs[REG_RBX] = 0x0;
         ctx->uc_mcontext.gregs[REG_RCX] = 0x0;
         ctx->uc_mcontext.gregs[REG_RDX] = 0x0;
+        break;
+
+    case LINUWUX_CPUID_LEAF_LEGACY_QUERY_SYSTEM_ID:
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            atomic_store(&g_legacy_reflex_dual, 1);
+            atomic_store(&g_legacy_reflex_query_system_id,
+                         (uint32_t)ctx->uc_mcontext.gregs[REG_RCX]);
+        }
+        else
+            linuwux_cpuid_passthrough(ctx, spoof_leaf, spoof_subleaf);
+        break;
+
+    case LINUWUX_CPUID_LEAF_LEGACY_QUERY_FULL_HANDLER:
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            atomic_store(&g_legacy_reflex_dual, 1);
+            atomic_store(&g_legacy_reflex_query_full_handler,
+                         (uint64_t)ctx->uc_mcontext.gregs[REG_RCX]);
+        }
+        else
+            linuwux_cpuid_passthrough(ctx, spoof_leaf, spoof_subleaf);
+        break;
+
+    case LINUWUX_CPUID_LEAF_LEGACY_QUERY_FULL_ID:
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            atomic_store(&g_legacy_reflex_dual, 1);
+            atomic_store(&g_legacy_reflex_query_full_id,
+                         (uint32_t)ctx->uc_mcontext.gregs[REG_RCX]);
+        }
+        else
+            linuwux_cpuid_passthrough(ctx, spoof_leaf, spoof_subleaf);
         break;
 
     case LINUWUX_CPUID_LEAF_FAKETIME:
