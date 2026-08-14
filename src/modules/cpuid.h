@@ -35,4 +35,7 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx);
  * blocked syscalls once armed. 0 == not armed yet. */
 uint64_t linuwux_cpuid_target_sys_handler(void);
 
+int linuwux_cpuid_legacy_reflex_initialized(void);
+uint64_t linuwux_cpuid_legacy_reflex_single_handler(void);
+
 #endif /* LINUWUX_CPUID_H */

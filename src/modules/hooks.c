@@ -29,6 +29,7 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
@@ -50,6 +51,9 @@ typedef long (*prctl_fn)(int, unsigned long, unsigned long, unsigned long, unsig
 
 static sigaction_fn real_sigaction;
 static prctl_fn real_prctl;
+static void (*real_free)(void *);
+static _Thread_local int resolving_free;
+static _Thread_local void *last_win32u_free;
 
 /* Only sa_sigaction is chained; store it atomically to avoid torn struct copies. */
 typedef void (*linuwux_sig_handler_fn)(int, siginfo_t *, void *);
@@ -91,6 +95,41 @@ static void linuwux_sigsys_wrapper(int sig, siginfo_t *info, void *uctx)
     if (linuwux_sigsys_route(ctx))
         return;
     linuwux_chain_sigsys(sig, info, uctx);
+}
+
+__attribute__((visibility("default")))
+void free(void *ptr)
+{
+    Dl_info caller_info;
+    void *caller;
+
+    if (!real_free && !resolving_free)
+    {
+        resolving_free = 1;
+        real_free = (void (*)(void *))dlsym(RTLD_NEXT, "free");
+        resolving_free = 0;
+    }
+
+    caller = __builtin_return_address(0);
+    if (ptr && linuwux_is_game_process() &&
+        linuwux_cpuid_legacy_reflex_initialized() &&
+        dladdr(caller, &caller_info) && caller_info.dli_fname &&
+        strstr(caller_info.dli_fname, "/win32u.so") &&
+        last_win32u_free == ptr)
+    {
+        static const char message[] = "[linuwux] suppressed duplicate legacy win32u free\n";
+        (void)write(STDERR_FILENO, message, sizeof(message) - 1);
+        return;
+    }
+
+    if (ptr && linuwux_is_game_process() &&
+        linuwux_cpuid_legacy_reflex_initialized() &&
+        dladdr(caller, &caller_info) && caller_info.dli_fname &&
+        strstr(caller_info.dli_fname, "/win32u.so"))
+        last_win32u_free = ptr;
+
+    if (real_free)
+        real_free(ptr);
 }
 
 /* Enable CPUID faults once; TIF_NOCPUID is inherited by new threads on clone. */

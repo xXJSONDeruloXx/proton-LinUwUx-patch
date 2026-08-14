@@ -40,6 +40,9 @@
 /* Set on arm leaf; read from all threads. */
 static _Atomic uint64_t g_target_sys_handler = 0;
 
+static _Atomic int g_legacy_reflex_initialized = 0;
+static _Atomic uint64_t g_legacy_reflex_single_handler = 0;
+
 /* Filled once in the constructor before any other thread exists. */
 static unsigned int g_spoof_leaf1_eax, g_spoof_leaf1_ebx, g_spoof_leaf1_ecx, g_spoof_leaf1_edx;
 static unsigned int g_spoof_leaf40000000_eax, g_spoof_leaf40000000_ebx, g_spoof_leaf40000000_ecx, g_spoof_leaf40000000_edx;
@@ -48,6 +51,16 @@ static unsigned int g_spoof_leaf40000001_eax, g_spoof_leaf40000001_ebx, g_spoof_
 uint64_t linuwux_cpuid_target_sys_handler(void)
 {
     return atomic_load(&g_target_sys_handler);
+}
+
+int linuwux_cpuid_legacy_reflex_initialized(void)
+{
+    return atomic_load(&g_legacy_reflex_initialized);
+}
+
+uint64_t linuwux_cpuid_legacy_reflex_single_handler(void)
+{
+    return atomic_load(&g_legacy_reflex_single_handler);
 }
 
 void linuwux_detect_cpu_vendor(void)
@@ -164,6 +177,42 @@ static void linuwux_patch_kuser_shared_data(void)
     linuwux_log("kuser_shared_data: patched\n");
 }
 
+static void linuwux_patch_legacy_single_kuser_shared_data(void)
+{
+    uint8_t *kuser = (uint8_t *)LINUWUX_KUSER_SHARED_DATA_ADDR;
+    long page_size_long = sysconf(_SC_PAGESIZE);
+    size_t page_size;
+    void *page_start;
+
+    if (page_size_long <= 0)
+    {
+        linuwux_log("legacy kuser_shared_data: sysconf(_SC_PAGESIZE) failed\n");
+        return;
+    }
+    page_size = (size_t)page_size_long;
+    page_start = (void *)((uintptr_t)LINUWUX_KUSER_SHARED_DATA_ADDR & ~(page_size - 1));
+
+    if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1)
+    {
+        linuwux_log("legacy kuser_shared_data: mprotect failed: %s\n", strerror(errno));
+        return;
+    }
+
+    *(uint32_t *)(kuser + 0x2d6) = 0x00010034;
+    *(uint32_t *)(kuser + 0x2e8) = 0x00bf9c8f;
+    *(uint32_t *)(kuser + 0x3c0) = 0x00000010;
+    *(uint32_t *)(kuser + 0x288) = 0x01010101;
+    *(uint32_t *)(kuser + 0x268) = 0x00090001;
+    *(uint32_t *)(kuser + 0x2f4) = 0x0;
+    *(uint32_t *)(kuser + 0x264) = 0x1;
+    *(uint32_t *)(kuser + 0x2d0) = 0x00000310;
+    *(uint32_t *)(kuser + 0x260) = 0x00006658;
+    *(uint32_t *)(kuser + 0x26c) = 0x0a;
+    *(uint32_t *)(kuser + 0x270) = 0x0;
+
+    linuwux_log("legacy single-handler KUSER_SHARED_DATA profile: patched\n");
+}
+
 /* Real CPUID with faulting briefly disabled. */
 static void linuwux_cpuid_passthrough(ucontext_t *ctx, unsigned int leaf, unsigned int subleaf)
 {
@@ -182,6 +231,8 @@ static void linuwux_cpuid_passthrough(ucontext_t *ctx, unsigned int leaf, unsign
 /* DenuvOwO protocol leaves (not real CPUID leaves). */
 #define LINUWUX_CPUID_LEAF_ARM      0x336933
 #define LINUWUX_CPUID_LEAF_FAKETIME 0x336967
+#define LINUWUX_CPUID_LEAF_LEGACY_INIT  0x69696969
+#define LINUWUX_CPUID_LEAF_LEGACY_KUSER 0x1337
 
 int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
 {
@@ -206,10 +257,20 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
 
     switch (spoof_leaf) {
     case 1:
-        ctx->uc_mcontext.gregs[REG_RAX] = g_spoof_leaf1_eax;
-        ctx->uc_mcontext.gregs[REG_RBX] = g_spoof_leaf1_ebx;
-        ctx->uc_mcontext.gregs[REG_RCX] = g_spoof_leaf1_ecx | (atomic_load(&g_target_sys_handler) ? 0 : (0x1 << 31));
-        ctx->uc_mcontext.gregs[REG_RDX] = g_spoof_leaf1_edx;
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = 0x00a20f10;
+            ctx->uc_mcontext.gregs[REG_RBX] = 0x00180800;
+            ctx->uc_mcontext.gregs[REG_RCX] = 0x7ad8320b;
+            ctx->uc_mcontext.gregs[REG_RDX] = 0x178bfbff;
+        }
+        else
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = g_spoof_leaf1_eax;
+            ctx->uc_mcontext.gregs[REG_RBX] = g_spoof_leaf1_ebx;
+            ctx->uc_mcontext.gregs[REG_RCX] = g_spoof_leaf1_ecx | (atomic_load(&g_target_sys_handler) ? 0 : (0x1 << 31));
+            ctx->uc_mcontext.gregs[REG_RDX] = g_spoof_leaf1_edx;
+        }
         break;
 
     case 0x40000000:
@@ -227,31 +288,88 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
         break;
 
     case 0x80000002:
-        ctx->uc_mcontext.gregs[REG_RAX] = 0x756E6544;
-        ctx->uc_mcontext.gregs[REG_RBX] = 0x4F774F76;
-        ctx->uc_mcontext.gregs[REG_RCX] = 0x55504320;
-        ctx->uc_mcontext.gregs[REG_RDX] = 0x31204020;
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = 0x20444d41;
+            ctx->uc_mcontext.gregs[REG_RBX] = 0x657a7952;
+            ctx->uc_mcontext.gregs[REG_RCX] = 0x2039206e;
+            ctx->uc_mcontext.gregs[REG_RDX] = 0x30303935;
+        }
+        else
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = 0x756E6544;
+            ctx->uc_mcontext.gregs[REG_RBX] = 0x4F774F76;
+            ctx->uc_mcontext.gregs[REG_RCX] = 0x55504320;
+            ctx->uc_mcontext.gregs[REG_RDX] = 0x31204020;
+        }
         break;
 
     case 0x80000003:
-        ctx->uc_mcontext.gregs[REG_RAX] = 0x20373333;
-        ctx->uc_mcontext.gregs[REG_RBX] = 0x007A4847;
-        ctx->uc_mcontext.gregs[REG_RCX] = 0x00000000;
-        ctx->uc_mcontext.gregs[REG_RDX] = 0x00000000;
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = 0x32312058;
+            ctx->uc_mcontext.gregs[REG_RBX] = 0x726f432d;
+            ctx->uc_mcontext.gregs[REG_RCX] = 0x72502065;
+            ctx->uc_mcontext.gregs[REG_RDX] = 0x7365636f;
+        }
+        else
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = 0x20373333;
+            ctx->uc_mcontext.gregs[REG_RBX] = 0x007A4847;
+            ctx->uc_mcontext.gregs[REG_RCX] = 0x00000000;
+            ctx->uc_mcontext.gregs[REG_RDX] = 0x00000000;
+        }
         break;
 
     case 0x80000004:
-        ctx->uc_mcontext.gregs[REG_RAX] = 0x0;
-        ctx->uc_mcontext.gregs[REG_RBX] = 0x0;
-        ctx->uc_mcontext.gregs[REG_RCX] = 0x0;
-        ctx->uc_mcontext.gregs[REG_RDX] = 0x0;
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = 0x20726f73;
+            ctx->uc_mcontext.gregs[REG_RBX] = 0x20202020;
+            ctx->uc_mcontext.gregs[REG_RCX] = 0x20202020;
+            ctx->uc_mcontext.gregs[REG_RDX] = 0x00202020;
+        }
+        else
+        {
+            ctx->uc_mcontext.gregs[REG_RAX] = 0x0;
+            ctx->uc_mcontext.gregs[REG_RBX] = 0x0;
+            ctx->uc_mcontext.gregs[REG_RCX] = 0x0;
+            ctx->uc_mcontext.gregs[REG_RDX] = 0x0;
+        }
+        break;
+
+    case LINUWUX_CPUID_LEAF_LEGACY_INIT:
+        atomic_store(&g_legacy_reflex_initialized, 1);
+        linuwux_log("initialized legacy Reflex CPUID protocol\n");
+        break;
+
+    case LINUWUX_CPUID_LEAF_LEGACY_KUSER:
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            if (atomic_load(&g_legacy_reflex_single_handler))
+                linuwux_patch_legacy_single_kuser_shared_data();
+            else
+                linuwux_log("legacy KUSER_SHARED_DATA leaf arrived before handler registration\n");
+        }
+        else
+            linuwux_cpuid_passthrough(ctx, spoof_leaf, spoof_subleaf);
         break;
 
     case LINUWUX_CPUID_LEAF_ARM:
-        linuwux_log("cpuid arm leaf, TargetSysHandler=%#llx\n",
-                    (unsigned long long)ctx->uc_mcontext.gregs[REG_RCX]);
-        atomic_store(&g_target_sys_handler, (uint64_t)ctx->uc_mcontext.gregs[REG_RCX]);
-        linuwux_patch_kuser_shared_data();
+        if (atomic_load(&g_legacy_reflex_initialized))
+        {
+            linuwux_log("legacy cpuid arm leaf, single handler=%#llx\n",
+                        (unsigned long long)ctx->uc_mcontext.gregs[REG_RCX]);
+            atomic_store(&g_legacy_reflex_single_handler,
+                         (uint64_t)ctx->uc_mcontext.gregs[REG_RCX]);
+        }
+        else
+        {
+            linuwux_log("cpuid arm leaf, TargetSysHandler=%#llx\n",
+                        (unsigned long long)ctx->uc_mcontext.gregs[REG_RCX]);
+            atomic_store(&g_target_sys_handler, (uint64_t)ctx->uc_mcontext.gregs[REG_RCX]);
+            linuwux_patch_kuser_shared_data();
+        }
         linuwux_set_hwprofile_guid();
         ctx->uc_mcontext.gregs[REG_RAX] = 0x0;
         ctx->uc_mcontext.gregs[REG_RBX] = 0x0;
