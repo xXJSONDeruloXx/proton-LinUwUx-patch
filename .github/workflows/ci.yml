@@ -44,7 +44,7 @@ jobs:
           echo "$exports"
 
       - name: Verify legacy export surface adds only free
-        run: test "$(nm -D dist/liblinuwux-legacy.so | awk '$2==\"T\"{print $3}' | sort)" = "$(printf '%s\n' clock_gettime free gettimeofday prctl sigaction | sort)"
+        run: test "$(nm -D dist/liblinuwux-legacy.so | awk '$2=="T"{print $3}' | sort)" = "$(printf '%s\n' clock_gettime free gettimeofday prctl sigaction | sort)"
 
       - name: Smoke test --install and --version
         run: |
