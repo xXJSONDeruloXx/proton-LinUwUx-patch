@@ -16,7 +16,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# install.sh -- fetches the latest LinUwUx libraries and installs them.
+# install.sh -- fetches the latest liblinuwux.so release and installs it.
 # No git clone, no gcc, no compiler toolchain required. Run via:
 #   curl -fsSL https://raw.githubusercontent.com/brcly/linuwux-runtime/main/install.sh | sh
 #
@@ -69,13 +69,11 @@ echo "============================================================"
 echo "  INSTALL SUCCESSFUL"
 echo "============================================================"
 echo "  Library  : ${LIBDIR}/liblinuwux.so"
-echo "  Legacy   : ${LIBDIR}/liblinuwux-legacy.so"
-echo "  Wrappers : ${BINDIR}/linuwux, ${BINDIR}/linuwux-legacy"
+echo "  Wrapper  : ${BINDIR}/linuwux"
 echo "============================================================"
 echo
 echo "Steam launch options for any GE-Proton / CachyOS game:"
 echo "  ${BINDIR}/linuwux %command%"
-echo "  ${BINDIR}/linuwux-legacy %command%  # legacy Reflex games"
 echo
 case ":$PATH:" in
     *":${BINDIR}:"*)

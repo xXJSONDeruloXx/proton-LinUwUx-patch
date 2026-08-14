@@ -107,6 +107,7 @@ void free(void *ptr)
 {
     Dl_info caller_info;
     void *caller;
+    int from_win32u = 0;
 
     if (!real_free && !resolving_free)
     {
@@ -117,20 +118,19 @@ void free(void *ptr)
 
     caller = __builtin_return_address(0);
     if (ptr && linuwux_is_game_process() &&
-        linuwux_cpuid_legacy_reflex_initialized() &&
+        linuwux_cpuid_legacy_reflex_route(NULL) &&
         dladdr(caller, &caller_info) && caller_info.dli_fname &&
-        strstr(caller_info.dli_fname, "/win32u.so") &&
-        last_win32u_free == ptr)
+        strstr(caller_info.dli_fname, "/win32u.so"))
+        from_win32u = 1;
+
+    if (from_win32u && last_win32u_free == ptr)
     {
         static const char message[] = "[linuwux] suppressed duplicate legacy win32u free\n";
         (void)write(STDERR_FILENO, message, sizeof(message) - 1);
         return;
     }
 
-    if (ptr && linuwux_is_game_process() &&
-        linuwux_cpuid_legacy_reflex_initialized() &&
-        dladdr(caller, &caller_info) && caller_info.dli_fname &&
-        strstr(caller_info.dli_fname, "/win32u.so"))
+    if (from_win32u)
         last_win32u_free = ptr;
 
     if (real_free)

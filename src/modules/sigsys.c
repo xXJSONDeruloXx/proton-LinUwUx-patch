@@ -54,72 +54,28 @@ int linuwux_sigsys_route(ucontext_t *ctx)
 {
     __uint128_t *xmm_regs;
     unsigned long long syscall_nr, rip, resume, target_sys_handler;
-#ifdef LINUWUX_LEGACY_REFLEX
-    unsigned long long legacy_target_sys_handler;
-    unsigned long long legacy_full_target;
-    unsigned int legacy_system_id, legacy_full_id;
     int legacy_route = 0;
-#endif
     unsigned char *fault_ip, opcode0, opcode1;
 
     if (!ctx->uc_mcontext.fpregs)
         return 0;
     xmm_regs = (__uint128_t *)ctx->uc_mcontext.fpregs->_xmm;
 
+    target_sys_handler = linuwux_cpuid_target_sys_handler();
 #ifdef LINUWUX_LEGACY_REFLEX
-    if ((xmm_regs[5] & 0xFFFFFFFFFFFFFFFFULL) == 0x1337133713371337ULL)
-        goto not_ours;
+    if (!target_sys_handler)
+        legacy_route = (target_sys_handler = linuwux_cpuid_legacy_reflex_route(ctx)) != 0;
+#endif
 
-    target_sys_handler = linuwux_cpuid_target_sys_handler();
-    syscall_nr = (unsigned long long)ctx->uc_mcontext.gregs[REG_RAX];
-    rip = (unsigned long long)ctx->uc_mcontext.gregs[REG_RIP];
-#else
-    target_sys_handler = linuwux_cpuid_target_sys_handler();
     if (target_sys_handler == 0 ||
         (xmm_regs[5] & 0xFFFFFFFFFFFFFFFFULL) == 0x1337133713371337ULL)
         goto not_ours;
 
     syscall_nr = (unsigned long long)ctx->uc_mcontext.gregs[REG_RAX];
     rip = (unsigned long long)ctx->uc_mcontext.gregs[REG_RIP];
-#endif
 
     if (!linuwux_redirect_all_enabled() && linuwux_rip_is_wine_system(rip))
         return 0;
-
-#ifdef LINUWUX_LEGACY_REFLEX
-    if (!target_sys_handler && linuwux_cpuid_legacy_reflex_initialized())
-    {
-        legacy_target_sys_handler = linuwux_cpuid_legacy_reflex_single_handler();
-        if (linuwux_cpuid_legacy_reflex_dual())
-        {
-            legacy_system_id = linuwux_cpuid_legacy_reflex_query_system_id();
-            legacy_full_target = linuwux_cpuid_legacy_reflex_query_full_handler();
-            legacy_full_id = linuwux_cpuid_legacy_reflex_query_full_id();
-            if (legacy_target_sys_handler &&
-                (uint32_t)syscall_nr == legacy_system_id &&
-                legacy_system_id != 0xffffffff &&
-                ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL &&
-                !ctx->uc_mcontext.gregs[REG_R10])
-                target_sys_handler = legacy_target_sys_handler;
-            else if (legacy_full_target &&
-                     (uint32_t)syscall_nr == legacy_full_id &&
-                     legacy_full_id != 0xffffffff &&
-                     ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
-                target_sys_handler = legacy_full_target;
-            legacy_route = target_sys_handler != 0;
-        }
-        else if (legacy_target_sys_handler &&
-                 ((uint32_t)syscall_nr == 0x13371337 || (uint32_t)syscall_nr == 0x13371338) &&
-                 ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
-        {
-            target_sys_handler = legacy_target_sys_handler;
-            legacy_route = 1;
-        }
-    }
-
-    if (!target_sys_handler)
-        goto not_ours;
-#endif
 
     fault_ip = (unsigned char *)(uintptr_t)rip;
     opcode0 = fault_ip[0];
@@ -127,20 +83,11 @@ int linuwux_sigsys_route(ucontext_t *ctx)
     /* Advance past `syscall` (0f 05) when that is the fault site. */
     resume = (opcode0 == 0x0f && opcode1 == 0x05) ? rip + 2 : rip;
 
-#ifdef LINUWUX_LEGACY_REFLEX
-    linuwux_log("sigsys %sredirect rax=%llx rip=%llx resume=%llx -> %#llx\n",
-                legacy_route ? "legacy " : "", syscall_nr, rip, resume, target_sys_handler);
-#else
     linuwux_log("sigsys redirect rax=%llx rip=%llx resume=%llx -> %#llx\n",
                 syscall_nr, rip, resume, target_sys_handler);
-#endif
 
     xmm_regs[4] = (xmm_regs[4] & ~(__uint128_t)0xFFFFFFFFULL) | (syscall_nr & 0xFFFFFFFF);
-#ifdef LINUWUX_LEGACY_REFLEX
     ctx->uc_mcontext.gregs[REG_RAX] = legacy_route ? ctx->uc_mcontext.gregs[REG_RCX] : (long long)resume;
-#else
-    ctx->uc_mcontext.gregs[REG_RAX] = (long long)resume;
-#endif
     ctx->uc_mcontext.gregs[REG_RCX] = (long long)target_sys_handler;
     ctx->uc_mcontext.gregs[REG_RIP] = (long long)target_sys_handler;
 

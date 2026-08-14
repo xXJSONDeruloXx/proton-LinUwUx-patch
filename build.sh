@@ -21,8 +21,10 @@ set -euo pipefail
 # ============================================================
 # LinUwUx builder
 #
-# Compiles a LinUwUx LD_PRELOAD library. The default artifact carries the
-# modern protocol; --legacy-reflex adds the opt-in legacy protocol.
+# Compiles liblinuwux.so -- an LD_PRELOAD library carrying all of
+# LinUwUx's CPUID spoofing, SIGSYS/DenuvOwO redirect, HwProfileGuid,
+# faketime, and DLL-override handling. Nothing else: no Proton/Wine
+# source is cloned, patched, or built. See src/modules/ for the mechanism.
 # ============================================================
 
 # YY.MM.DD; add a .N suffix for same-day hotfixes (26.08.13 -> 26.08.13.1).
@@ -35,7 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="${SCRIPT_DIR}/src"
 DIST_DIR="${SCRIPT_DIR}/dist"
 INSTALL=0
-LEGACY_REFLEX=0
+LEGACY_REFLEX=
+flavor_flags=()
 
 if [[ -t 1 ]]; then
     RED='\033[0;31m'
@@ -62,35 +65,32 @@ usage() {
     cat << EOF
 LinUwUx builder v${VERSION}
 
-Build the LinUwUx LD_PRELOAD library that installs the DenuvOwO
-hypervisor-bypass patch set into GE-Proton or CachyOS Proton. Nothing to
-clone, patch, or configure on the Proton side.
+Build liblinuwux.so -- an LD_PRELOAD library that installs the
+LinUwUx DenuvOwO hypervisor-bypass patch set into GE-Proton or CachyOS
+Proton. Nothing to clone, patch, or configure on the Proton side.
 Official Valve Proton is not currently supported.
 
 Usage:
   $(basename "$0") [OPTIONS]
 
 Options:
-  --install                   Also install the selected artifact and its
-                               matching wrapper under ~/.local
-  --legacy-reflex             Build the opt-in liblinuwux-legacy.so flavor
-                               and use the 'linuwux-legacy' wrapper
+  --install                   Also install to ~/.local/lib + a 'linuwux'
+                               wrapper in ~/.local/bin, for a plain
+                               'linuwux %command%' launch option
+  --legacy-reflex             Build the opt-in legacy .so + wrapper
   -h, --help                  Show this help
 
 Environment:
-  LINUWUX_DEBUG=1             Runtime: event tracing from the selected .so
+  LINUWUX_DEBUG=1             Runtime: event tracing from liblinuwux.so
   LINUWUX_REDIRECT_ALL=1      Runtime: disable SIGSYS Wine-PE scope filter
   PROTON_AVX=1                Runtime: AVX/XSAVE in spoofed CPUID/KUSER data
 
-Everything the selected .so does -- CPUID spoofing, SIGSYS/DenuvOwO
+Everything liblinuwux.so does -- CPUID spoofing, SIGSYS/DenuvOwO
 redirect, HwProfileGuid, faketime, and DLL overrides (winmm/version/
 reflex=n,b, PROTON_DISABLE_LSTEAMCLIENT) -- happens live at load time
 from inside the library itself. Wine's own source is never touched, no
-prefix registry file needs importing, and no launcher script needs
-editing.
-The default artifact is the modern path; --legacy-reflex also includes
-the legacy Reflex CPUID/SIGSYS protocol and its compatibility hooks. Use
-the selected artifact with an existing GE-Proton or CachyOS Proton install
+prefix registry file needs importing, no launcher script needs
+editing. Use it with an existing GE-Proton or CachyOS Proton install
 (append, don't replace, LD_PRELOAD -- a bare LD_PRELOAD=... clobbers
 Steam's own overlay preload entry):
 
@@ -108,35 +108,25 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)   usage ;;
         --install) INSTALL=1; shift ;;
-        --legacy-reflex) LEGACY_REFLEX=1; shift ;;
+        --legacy-reflex) LEGACY_REFLEX=1; flavor_flags=(-DLINUWUX_LEGACY_REFLEX=1); shift ;;
         *)
             die "Unknown argument: $1  (use --help)"
             ;;
     esac
 done
 
-if [[ $LEGACY_REFLEX -eq 1 ]]; then
-    LIB_BASENAME="liblinuwux-legacy.so"
-    WRAPPER_BASENAME="linuwux-legacy"
-else
-    LIB_BASENAME="liblinuwux.so"
-    WRAPPER_BASENAME="linuwux"
-fi
+LIB_BASENAME="liblinuwux${LEGACY_REFLEX:+-legacy}.so"
+WRAPPER_BASENAME="linuwux${LEGACY_REFLEX:+-legacy}"
 
 already_installed() {
     [[ -f "${HOME}/.local/lib/${LIB_BASENAME}" ]]
 }
 
-# Compile the selected artifact and drop it in dist/. No Proton/Wine
+# Compile liblinuwux.so and drop it in dist/. No Proton/Wine
 # source is touched or needed.
 build_linuwux() {
     local out="${DIST_DIR}/${LIB_BASENAME}"
     local -a sources=("${SRC_DIR}"/*.c "${SRC_DIR}"/modules/*.c)
-    local -a flavor_flags=()
-
-    if [[ $LEGACY_REFLEX -eq 1 ]]; then
-        flavor_flags=(-DLINUWUX_LEGACY_REFLEX=1)
-    fi
 
     info "Building ${LIB_BASENAME} ..."
     [[ ${#sources[@]} -gt 0 && -f "${sources[0]}" ]] || die "No .c files found under $SRC_DIR"

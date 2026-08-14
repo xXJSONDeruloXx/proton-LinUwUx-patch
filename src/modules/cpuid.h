@@ -36,12 +36,7 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx);
 uint64_t linuwux_cpuid_target_sys_handler(void);
 
 #ifdef LINUWUX_LEGACY_REFLEX
-int linuwux_cpuid_legacy_reflex_initialized(void);
-uint64_t linuwux_cpuid_legacy_reflex_single_handler(void);
-int linuwux_cpuid_legacy_reflex_dual(void);
-uint32_t linuwux_cpuid_legacy_reflex_query_system_id(void);
-uint64_t linuwux_cpuid_legacy_reflex_query_full_handler(void);
-uint32_t linuwux_cpuid_legacy_reflex_query_full_id(void);
+unsigned long long linuwux_cpuid_legacy_reflex_route(ucontext_t *);
 #endif
 
 #endif /* LINUWUX_CPUID_H */
