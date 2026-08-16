@@ -31,11 +31,17 @@ void linuwux_detect_cpu_vendor(void);
 /* Select the DenuvOwO SimpleSvm identity before its early CPUID checks. */
 void linuwux_cpuid_hint_denuvowo(void);
 
+/* Select the staged SimpleSvm protocol used by DenuvOwO.ini winmm packs. */
+void linuwux_cpuid_hint_simple_svm(void);
+
 /* Handle a CPUID fault. Returns 1 if handled. */
 int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx);
 
 /* True after a legacy Reflex init leaf selects the compatibility protocol. */
 int linuwux_cpuid_legacy_active(void);
+
+/* True while the DenuvOwO.ini SimpleSvm protocol is selected. */
+int linuwux_cpuid_simple_svm_active(void);
 
 /* TargetSysHandler, set by the arm leaf; 0 == not armed yet. */
 uint64_t linuwux_cpuid_target_sys_handler(void);

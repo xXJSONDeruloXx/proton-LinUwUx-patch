@@ -48,7 +48,7 @@ static const char linuwux_version_tag[] __attribute__((used)) =
  * is_game markers beside the Windows target exe (existence only, never loaded):
  *   reflex.dll / reflex64.dll  — modern reflex-loader packs
  *   DenuvOwO.dll               — older hybrid DenuvOwO loader
- *   DenuvOwO.ini               — winmm-loader packs (no reflex.dll)
+ *   DenuvOwO.ini               — SimpleSvm-backed winmm-loader packs
  *
  * Prefer reflex* when both families are present.
  *
@@ -59,6 +59,7 @@ enum linuwux_game_marker {
     LINUWUX_GAME_NONE = 0,
     LINUWUX_GAME_REFLEX,
     LINUWUX_GAME_DENUVOWO,
+    LINUWUX_GAME_SIMPLE_SVM,
 };
 
 struct linuwux_game_scan {
@@ -99,10 +100,16 @@ static void linuwux_dir_scan(const char *dir, struct linuwux_game_scan *out)
             out->native |= LINUWUX_NATIVE_VERSION;
             continue;
         }
-        if (out->marker == LINUWUX_GAME_NONE &&
-            (!strcasecmp(ent->d_name, "DenuvOwO.dll") ||
-             !strcasecmp(ent->d_name, "DenuvOwO.ini"))) {
+        if (!strcasecmp(ent->d_name, "DenuvOwO.dll") &&
+            (out->marker == LINUWUX_GAME_NONE ||
+             out->marker == LINUWUX_GAME_SIMPLE_SVM)) {
             out->marker = LINUWUX_GAME_DENUVOWO;
+            linuwux_log("Found %s\n", ent->d_name);
+            continue;
+        }
+        if (!strcasecmp(ent->d_name, "DenuvOwO.ini") &&
+            out->marker == LINUWUX_GAME_NONE) {
+            out->marker = LINUWUX_GAME_SIMPLE_SVM;
             linuwux_log("Found %s\n", ent->d_name);
         }
     }
@@ -216,6 +223,8 @@ static void linuwux_init(int argc, char **argv, char **envp)
     if (is_game) {
         if (scan.marker == LINUWUX_GAME_DENUVOWO)
             linuwux_cpuid_hint_denuvowo();
+        else if (scan.marker == LINUWUX_GAME_SIMPLE_SVM)
+            linuwux_cpuid_hint_simple_svm();
         linuwux_detect_cpu_vendor();
     }
 

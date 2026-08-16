@@ -30,6 +30,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "linuwux.h"
@@ -41,6 +42,7 @@ enum linuwux_protocol {
     LINUWUX_PROTO_MODERN = 1,
     LINUWUX_PROTO_LEGACY_SINGLE = 2,
     LINUWUX_PROTO_LEGACY_DUAL = 3,
+    LINUWUX_PROTO_SIMPLE_SVM = 4,
 };
 
 /*
@@ -54,6 +56,8 @@ struct linuwux_protocol_state {
     _Atomic uint64_t full_handler;  /* legacy dual only */
     _Atomic uint32_t system_id;     /* legacy dual syscall id -> single handler */
     _Atomic uint32_t full_id;       /* legacy dual syscall id -> full handler */
+    _Atomic int simple_svm_target;  /* 0x69696969 selected the target process */
+    _Atomic uint64_t simple_svm_process_id; /* 0x1337 RDX, for diagnostics */
 };
 
 static struct linuwux_protocol_state g_proto = {
@@ -63,6 +67,8 @@ static struct linuwux_protocol_state g_proto = {
     .full_handler = 0,
     .system_id = 0xffffffffu,
     .full_id = 0xffffffffu,
+    .simple_svm_target = 0,
+    .simple_svm_process_id = 0,
 };
 
 /*
@@ -73,6 +79,12 @@ static struct linuwux_protocol_state g_proto = {
 static void linuwux_proto_select_modern(void)
 {
     atomic_store(&g_proto.protocol, LINUWUX_PROTO_MODERN);
+    atomic_store(&g_proto.rax_is_resume, 1);
+}
+
+static void linuwux_proto_select_simple_svm(void)
+{
+    atomic_store(&g_proto.protocol, LINUWUX_PROTO_SIMPLE_SVM);
     atomic_store(&g_proto.rax_is_resume, 1);
 }
 
@@ -100,6 +112,19 @@ void linuwux_cpuid_hint_denuvowo(void)
      * right profile. Hybrid handling may be refined later. */
     linuwux_proto_select_modern();
     linuwux_log("selected DenuvOwO SimpleSvm identity from marker\n");
+}
+
+void linuwux_cpuid_hint_simple_svm(void)
+{
+    if (atomic_load(&g_proto.protocol) != LINUWUX_PROTO_NONE)
+        return;
+
+    /* The winmm-loader pack is backed by the archived SimpleSvm driver.
+     * Its identity is not active until CPUID 0x69696969 selects the target
+     * address space, so keep that phase distinct from the generic modern
+     * trampoline used by DenuvOwO.dll/reflex scenes. */
+    linuwux_proto_select_simple_svm();
+    linuwux_log("selected DenuvOwO SimpleSvm protocol from marker\n");
 }
 
 /* Spoofed CPUID identity, filled once in the constructor. */
@@ -136,9 +161,19 @@ static int linuwux_protocol_is_legacy(int protocol)
            protocol == LINUWUX_PROTO_LEGACY_DUAL;
 }
 
+static int linuwux_protocol_is_simple_svm(int protocol)
+{
+    return protocol == LINUWUX_PROTO_SIMPLE_SVM;
+}
+
 int linuwux_cpuid_legacy_active(void)
 {
     return linuwux_protocol_is_legacy(atomic_load(&g_proto.protocol));
+}
+
+int linuwux_cpuid_simple_svm_active(void)
+{
+    return linuwux_protocol_is_simple_svm(atomic_load(&g_proto.protocol));
 }
 
 /* Pick TargetSys / legacy handler for this SIGSYS; 0 = not ours. */
@@ -148,7 +183,8 @@ static uint64_t linuwux_proto_pick_handler(ucontext_t *ctx)
     uint64_t handler, full_handler, rax, rcx;
     uint32_t system_id, full_id;
 
-    if (protocol == LINUWUX_PROTO_MODERN)
+    if (protocol == LINUWUX_PROTO_MODERN ||
+        linuwux_protocol_is_simple_svm(protocol))
         return atomic_load(&g_proto.handler);
 
     if (!ctx)
@@ -279,6 +315,8 @@ struct linuwux_kuser_profile {
     size_t op_count;
     int write_nt_system_root; /* NtSystemRoot WCHAR[] at 0x30 */
     int clear_avx_unless_proton_avx;
+    int isolate_page;         /* replace the target's KUSER mapping privately */
+    int read_only;            /* source driver exposes its replacement read-only */
 };
 
 /*
@@ -299,6 +337,10 @@ struct linuwux_kuser_profile {
 #define KUSER_NumberOfPhysicalPages       0x2E8
 #define KUSER_SafeBootMode                0x2EC
 #define KUSER_SharedDataFlags             0x2F0
+#define KUSER_QpcFrequency                0x300
+#define KUSER_TimeUpdateLock              0x340
+#define KUSER_BaselineSystemTimeQpc       0x348
+#define KUSER_BaselineInterruptTimeQpc    0x350
 #define KUSER_QpcInterruptTimeSpan        0x36C  /* QPC increment fields */
 #define KUSER_ActiveProcessorCount        0x3C0
 #define KUSER_TimeZoneBiasEffectiveStart  0x3C8
@@ -395,6 +437,19 @@ static const struct linuwux_kuser_profile kuser_profile_modern = {
     .clear_avx_unless_proton_avx = 1,
 };
 
+static const struct linuwux_kuser_profile kuser_profile_simple_svm = {
+    .name = "simple-svm",
+    .ops = kuser_ops_modern,
+    .op_count = sizeof(kuser_ops_modern) / sizeof(kuser_ops_modern[0]),
+    /* SimpleSvm maps the existing KUSER page and only overwrites the
+     * fields listed above; unlike the generic DenuvOwO path it does not
+     * synthesize NtSystemRoot at +0x30. */
+    .write_nt_system_root = 0,
+    .clear_avx_unless_proton_avx = 1,
+    .isolate_page = 0,
+    .read_only = 1,
+};
+
 /* Legacy Reflex profiles; overlapping stores intentionally remain ordered. */
 #define KUSER_CyclesPerYield             0x2D6
 #define KUSER_TickCountLowPad            0x378  /* near TickCount region */
@@ -457,6 +512,8 @@ linuwux_kuser_profile_for(int protocol)
     switch (protocol) {
     case LINUWUX_PROTO_MODERN:
         return &kuser_profile_modern;
+    case LINUWUX_PROTO_SIMPLE_SVM:
+        return &kuser_profile_simple_svm;
     case LINUWUX_PROTO_LEGACY_DUAL:
         return &kuser_profile_legacy_dual;
     case LINUWUX_PROTO_LEGACY_SINGLE:
@@ -469,6 +526,8 @@ linuwux_kuser_profile_for(int protocol)
 static void linuwux_kuser_apply(const struct linuwux_kuser_profile *profile)
 {
     uint8_t *kuser = (uint8_t *)LINUWUX_KUSER_SHARED_DATA_ADDR;
+    void *snapshot;
+    void *replacement;
     long page_size_long = sysconf(_SC_PAGESIZE);
     size_t page_size, i;
     void *page_start;
@@ -483,7 +542,28 @@ static void linuwux_kuser_apply(const struct linuwux_kuser_profile *profile)
     page_size = (size_t)page_size_long;
     page_start = (void *)((uintptr_t)LINUWUX_KUSER_SHARED_DATA_ADDR & ~(page_size - 1));
 
-    if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1) {
+    if (profile->isolate_page) {
+        snapshot = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (snapshot == MAP_FAILED) {
+            linuwux_log("kuser_shared_data: snapshot mmap failed: %s\n",
+                        strerror(errno));
+            return;
+        }
+        memcpy(snapshot, kuser, page_size);
+
+        replacement = mmap(page_start, page_size, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        if (replacement == MAP_FAILED) {
+            linuwux_log("kuser_shared_data: private mapping failed: %s\n",
+                        strerror(errno));
+            munmap(snapshot, page_size);
+            return;
+        }
+        memcpy(replacement, snapshot, page_size);
+        munmap(snapshot, page_size);
+        kuser = (uint8_t *)replacement;
+    } else if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1) {
         linuwux_log("kuser_shared_data: mprotect failed: %s\n", strerror(errno));
         return;
     }
@@ -526,6 +606,10 @@ static void linuwux_kuser_apply(const struct linuwux_kuser_profile *profile)
             *(uint8_t *)(kuser + KUSER_PF_AVX2) = 0;
         }
     }
+
+    if (profile->read_only && mprotect(page_start, page_size, PROT_READ) == -1)
+        linuwux_log("kuser_shared_data: read-only mapping failed: %s\n",
+                    strerror(errno));
 
     linuwux_log("kuser_shared_data: patched (%s)\n", profile->name);
 }
@@ -576,6 +660,20 @@ static int linuwux_cpuid_action_arm(unsigned int leaf, ucontext_t *ctx)
 
     (void)leaf;
 
+    if (linuwux_protocol_is_simple_svm(protocol)) {
+        if (!atomic_load(&g_proto.simple_svm_target)) {
+            linuwux_log("SimpleSvm arm leaf arrived before target selection\n");
+            return 0;
+        }
+
+        atomic_store(&g_proto.handler, handler);
+        linuwux_log("cpuid arm leaf, protocol=simple-svm TargetSysHandler=%#llx\n",
+                    (unsigned long long)handler);
+        /* SimpleSvm records the handler and then executes the real CPUID. */
+        linuwux_cpuid_passthrough(ctx, leaf, (unsigned int)handler);
+        return 1;
+    }
+
     atomic_store(&g_proto.handler, handler);
 
     if (linuwux_protocol_is_legacy(protocol)) {
@@ -608,6 +706,13 @@ static int linuwux_cpuid_action_legacy_init(unsigned int leaf, ucontext_t *ctx)
 
     (void)leaf;
 
+    if (linuwux_protocol_is_simple_svm(protocol)) {
+        atomic_store(&g_proto.simple_svm_target, 1);
+        linuwux_log("SimpleSvm target selected by CPUID 0x69696969\n");
+        /* The driver records the target CR3 and returns native CPUID data. */
+        return 0;
+    }
+
     if (protocol == LINUWUX_PROTO_MODERN)
         return 0;
 
@@ -624,6 +729,21 @@ static int linuwux_cpuid_action_legacy_kuser(unsigned int leaf, ucontext_t *ctx)
     const struct linuwux_kuser_profile *profile;
 
     (void)leaf;
+
+    if (linuwux_protocol_is_simple_svm(protocol)) {
+        atomic_store(&g_proto.simple_svm_process_id,
+                     (uint64_t)ctx->uc_mcontext.gregs[REG_RDX]);
+        if (atomic_load(&g_proto.simple_svm_target)) {
+            profile = linuwux_kuser_profile_for(protocol);
+            linuwux_kuser_apply(profile);
+            linuwux_log("SimpleSvm process registered by CPUID 0x1337 (RDX=%#llx)\n",
+                        (unsigned long long)ctx->uc_mcontext.gregs[REG_RDX]);
+        } else {
+            linuwux_log("SimpleSvm process leaf arrived before target selection\n");
+        }
+        /* The driver records RDX and returns native CPUID data. */
+        return 0;
+    }
 
     if (!linuwux_protocol_is_legacy(protocol))
         return 0;
@@ -775,7 +895,27 @@ static int linuwux_cpuid_static_profile_matches(int profile)
         return 1;
     if (profile == LINUWUX_CPUID_STATIC_LEGACY)
         return linuwux_protocol_is_legacy(protocol);
+    if (linuwux_protocol_is_simple_svm(protocol))
+        return atomic_load(&g_proto.simple_svm_target);
     return !linuwux_protocol_is_legacy(protocol);
+}
+
+/* Before 0x69696969 the real driver returns the host CPUID result with only
+ * the hypervisor-present bit added to leaf 1. The target profile is selected
+ * later, so do not expose the synthetic SimpleSvm CPU identity early. */
+static int linuwux_cpuid_simple_svm_untargeted(unsigned int leaf,
+                                                unsigned int subleaf,
+                                                ucontext_t *ctx)
+{
+    int protocol = atomic_load(&g_proto.protocol);
+
+    if (!linuwux_protocol_is_simple_svm(protocol) ||
+        atomic_load(&g_proto.simple_svm_target) || leaf != 1)
+        return 0;
+
+    linuwux_cpuid_passthrough(ctx, leaf, subleaf);
+    ctx->uc_mcontext.gregs[REG_RCX] |= (1u << 31);
+    return 1;
 }
 
 static int linuwux_cpuid_dispatch_action(unsigned int leaf, ucontext_t *ctx)
@@ -815,7 +955,8 @@ static int linuwux_cpuid_dispatch_static(unsigned int leaf, ucontext_t *ctx)
             edx = s->c_edx;
         }
 
-        if (s->flags & LINUWUX_CPUID_STATIC_ECX_OR_UNARMED_BIT31) {
+        if ((s->flags & LINUWUX_CPUID_STATIC_ECX_OR_UNARMED_BIT31) &&
+            !linuwux_protocol_is_simple_svm(atomic_load(&g_proto.protocol))) {
             if (!atomic_load(&g_proto.handler))
                 ecx |= (1u << 31);
         }
@@ -833,6 +974,7 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
 {
     unsigned int spoof_leaf, spoof_subleaf;
     unsigned char *rip = (unsigned char *)ctx->uc_mcontext.gregs[REG_RIP];
+    int handled;
 
     spoof_leaf = (unsigned int)ctx->uc_mcontext.gregs[REG_RAX];
     spoof_subleaf = (unsigned int)ctx->uc_mcontext.gregs[REG_RCX];
@@ -850,13 +992,37 @@ int linuwux_cpuid_spoof(siginfo_t *info, ucontext_t *ctx)
         return 1;
     }
 
-    if (linuwux_cpuid_dispatch_action(spoof_leaf, ctx) ||
-        linuwux_cpuid_dispatch_static(spoof_leaf, ctx)) {
+    linuwux_log("cpuid intercept leaf=%#x subleaf=%#x rcx=%#llx rdx=%#llx rip=%#llx protocol=%d\n",
+                spoof_leaf, spoof_subleaf,
+                (unsigned long long)ctx->uc_mcontext.gregs[REG_RCX],
+                (unsigned long long)ctx->uc_mcontext.gregs[REG_RDX],
+                (unsigned long long)(uintptr_t)rip,
+                atomic_load(&g_proto.protocol));
+
+    handled = linuwux_cpuid_dispatch_action(spoof_leaf, ctx);
+    if (!handled)
+        handled = linuwux_cpuid_simple_svm_untargeted(spoof_leaf, spoof_subleaf, ctx);
+    if (!handled)
+        handled = linuwux_cpuid_dispatch_static(spoof_leaf, ctx);
+
+    if (handled) {
+        linuwux_log("cpuid handled leaf=%#x -> eax=%#x ebx=%#x ecx=%#x edx=%#x\n",
+                    spoof_leaf,
+                    (unsigned int)ctx->uc_mcontext.gregs[REG_RAX],
+                    (unsigned int)ctx->uc_mcontext.gregs[REG_RBX],
+                    (unsigned int)ctx->uc_mcontext.gregs[REG_RCX],
+                    (unsigned int)ctx->uc_mcontext.gregs[REG_RDX]);
         ctx->uc_mcontext.gregs[REG_RIP] += 2;
         return 1;
     }
 
     linuwux_cpuid_passthrough(ctx, spoof_leaf, spoof_subleaf);
+    linuwux_log("cpuid passthrough leaf=%#x -> eax=%#x ebx=%#x ecx=%#x edx=%#x\n",
+                spoof_leaf,
+                (unsigned int)ctx->uc_mcontext.gregs[REG_RAX],
+                (unsigned int)ctx->uc_mcontext.gregs[REG_RBX],
+                (unsigned int)ctx->uc_mcontext.gregs[REG_RCX],
+                (unsigned int)ctx->uc_mcontext.gregs[REG_RDX]);
     ctx->uc_mcontext.gregs[REG_RIP] += 2;
     return 1;
 }
