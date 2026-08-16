@@ -49,6 +49,7 @@ static inline int linuwux_redirect_all_enabled(void)
 }
 
 /* Shared by every module; implemented in common.c. */
+void linuwux_debug_init_output(void);
 void linuwux_log(const char *fmt, ...);
 
 /* is_game: set once in the constructor. Gates log/hooks/overrides. */

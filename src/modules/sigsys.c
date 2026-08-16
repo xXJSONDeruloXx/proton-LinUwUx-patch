@@ -75,7 +75,7 @@ static void linuwux_simple_svm_clear_query_buffer(ucontext_t *ctx,
         buffer[i] = 0;
 }
 
-int linuwux_sigsys_route(ucontext_t *ctx)
+int linuwux_sigsys_route(siginfo_t *info, ucontext_t *ctx)
 {
     __uint128_t *xmm_regs;
     struct linuwux_syscall_route route;
@@ -152,8 +152,10 @@ int linuwux_sigsys_route(ucontext_t *ctx)
     /* Advance past `syscall` (0f 05) when that is the fault site. */
     resume = (opcode0 == 0x0f && opcode1 == 0x05) ? rip + 2 : rip;
 
-    linuwux_log("sigsys redirect pid=%d rax=%llx rip=%llx rcx=%llx resume=%llx rdi=%llx rsi=%llx rdx=%llx r8=%llx r9=%llx r10=%llx r11=%llx mode=%d xmm5=%llx -> %#llx\n",
+    linuwux_log("sigsys redirect pid=%d si_code=%d si_errno=%d rax=%llx rip=%llx rcx=%llx resume=%llx rdi=%llx rsi=%llx rdx=%llx r8=%llx r9=%llx r10=%llx r11=%llx mode=%d xmm5=%llx -> %#llx\n",
                 (int)getpid(),
+                info ? info->si_code : 0,
+                info ? info->si_errno : 0,
                 syscall_nr, rip, saved_rcx, resume,
                 (unsigned long long)ctx->uc_mcontext.gregs[REG_RDI],
                 (unsigned long long)ctx->uc_mcontext.gregs[REG_RSI],

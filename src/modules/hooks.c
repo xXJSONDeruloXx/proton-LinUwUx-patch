@@ -24,6 +24,7 @@
 
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stddef.h>
@@ -81,7 +82,7 @@ static void linuwux_segv_wrapper(int sig, siginfo_t *info, void *uctx)
 static void linuwux_sigsys_wrapper(int sig, siginfo_t *info, void *uctx)
 {
     ucontext_t *ctx = (ucontext_t *)uctx;
-    if (linuwux_sigsys_route(ctx))
+    if (linuwux_sigsys_route(info, ctx))
         return;
     linuwux_chain_sigsys(sig, info, uctx);
 }
@@ -120,10 +121,21 @@ static void linuwux_enable_cpuid_fault(void)
 {
     static _Atomic int done;
     int expected_done = 0;
+    long result;
+
     if (!atomic_compare_exchange_strong(&done, &expected_done, 1))
         return;
-    syscall(SYS_arch_prctl, ARCH_SET_CPUID, 0);
-    linuwux_log("CPUID faulting enabled (tid=%d)\n", (int)syscall(SYS_gettid));
+
+    result = syscall(SYS_arch_prctl, ARCH_SET_CPUID, 0);
+    if (result != 0)
+    {
+        linuwux_log("CPUID faulting enable failed: result=%ld errno=%d\n",
+                    result, errno);
+        return;
+    }
+
+    linuwux_log("CPUID faulting enabled (tid=%d)\n",
+                (int)syscall(SYS_gettid));
 }
 
 __attribute__((visibility("default")))
@@ -139,6 +151,9 @@ int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
         struct sigaction ours = *act;
         ours.sa_sigaction = linuwux_segv_wrapper;
         int r = real_sigaction(signum, &ours, oldact);
+        linuwux_log("sigaction(SIGSEGV): requested=%p wrapper=%p result=%d errno=%d\n",
+                    (void *)act->sa_sigaction, (void *)ours.sa_sigaction,
+                    r, r == 0 ? 0 : errno);
         if (r == 0) {
             atomic_store(&s_real_segv_handler, act->sa_sigaction);
             linuwux_log("intercepted Wine's sigaction(SIGSEGV, ...)\n");
@@ -153,6 +168,9 @@ int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
         struct sigaction ours = *act;
         ours.sa_sigaction = linuwux_sigsys_wrapper;
         int r = real_sigaction(signum, &ours, oldact);
+        linuwux_log("sigaction(SIGSYS): requested=%p wrapper=%p result=%d errno=%d\n",
+                    (void *)act->sa_sigaction, (void *)ours.sa_sigaction,
+                    r, r == 0 ? 0 : errno);
         if (r == 0) {
             atomic_store(&s_real_sys_handler, act->sa_sigaction);
             linuwux_log("intercepted Wine's sigaction(SIGSYS, ...)\n");

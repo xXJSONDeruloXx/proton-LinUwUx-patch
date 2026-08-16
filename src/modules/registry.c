@@ -180,7 +180,11 @@ void linuwux_set_hwprofile_guid(void)
     nt_close = (nt_close_fn)linuwux_find_ntdll_symbol("NtClose");
     if (!nt_create_key || !nt_set_value_key || !nt_close)
     {
-        linuwux_log("hwprofile_guid: could not resolve NtCreateKey/NtSetValueKey/NtClose -- skipping\n");
+        linuwux_log("hwprofile_guid: registry API unavailable "
+                    "(NtCreateKey=%d NtSetValueKey=%d NtClose=%d) -- skipping\n",
+                    nt_create_key != NULL,
+                    nt_set_value_key != NULL,
+                    nt_close != NULL);
         return;
     }
 
@@ -213,12 +217,18 @@ void linuwux_set_hwprofile_guid(void)
         attr.SecurityQualityOfService = NULL;
 
         next = NULL;
-        if (nt_create_key(&next, LINUWUX_KEY_ALL_ACCESS, &attr, 0, NULL, 0, NULL) < 0 || !next)
         {
-            linuwux_log("hwprofile_guid: NtCreateKey(\"%s\") failed -- skipping\n", comp);
-            if (cur)
-                nt_close(cur);
-            return;
+            int32_t status = nt_create_key(&next, LINUWUX_KEY_ALL_ACCESS,
+                                           &attr, 0, NULL, 0, NULL);
+            if (status < 0 || !next)
+            {
+                linuwux_log("hwprofile_guid: NtCreateKey(\"%s\") failed "
+                            "NTSTATUS=%#x handle=%p -- skipping\n",
+                            comp, (unsigned int)(uint32_t)status, next);
+                if (cur)
+                    nt_close(cur);
+                return;
+            }
         }
         if (cur)
             nt_close(cur);
@@ -232,11 +242,19 @@ void linuwux_set_hwprofile_guid(void)
 
     linuwux_ascii_to_utf16(data_str, data_buf, sizeof(data_str));
 
-    if (nt_set_value_key(cur, &value_name, 0, LINUWUX_REG_SZ, data_buf,
-                          (uint32_t)(sizeof(data_str) * sizeof(uint16_t))) < 0)
-        linuwux_log("hwprofile_guid: NtSetValueKey failed\n");
-    else
-        linuwux_log("hwprofile_guid: HwProfileGuid registry value set\n");
+    {
+        int32_t status = nt_set_value_key(
+            cur, &value_name, 0, LINUWUX_REG_SZ, data_buf,
+            (uint32_t)(sizeof(data_str) * sizeof(uint16_t)));
+        if (status < 0)
+            linuwux_log("hwprofile_guid: NtSetValueKey failed "
+                        "NTSTATUS=%#x\n",
+                        (unsigned int)(uint32_t)status);
+        else
+            linuwux_log("hwprofile_guid: HwProfileGuid registry value set "
+                        "NTSTATUS=%#x\n",
+                        (unsigned int)(uint32_t)status);
+    }
 
     nt_close(cur);
 }

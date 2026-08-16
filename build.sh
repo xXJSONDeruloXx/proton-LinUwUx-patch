@@ -79,6 +79,8 @@ Options:
 
 Environment:
   LINUWUX_DEBUG=1             Runtime: event tracing from liblinuwux.so
+  LINUWUX_DEBUG_DIR=/path      Runtime: write one inherited session log there
+  LINUWUX_DEBUG_LOG=/path      Runtime: append diagnostics to this exact file
   LINUWUX_REDIRECT_ALL=1      Runtime: disable SIGSYS Wine-PE scope filter
   PROTON_AVX=1                Runtime: AVX/XSAVE in spoofed CPUID/KUSER data
 

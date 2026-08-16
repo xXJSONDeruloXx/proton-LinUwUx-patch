@@ -20,10 +20,11 @@
 #ifndef LINUWUX_SIGSYS_H
 #define LINUWUX_SIGSYS_H
 
+#include <signal.h>
 #include <stddef.h>
 #include <ucontext.h>
 
 /* Redirect blocked syscalls into TargetSysHandler after arm. Returns 1 if handled. */
-int linuwux_sigsys_route(ucontext_t *ctx);
+int linuwux_sigsys_route(siginfo_t *info, ucontext_t *ctx);
 
 #endif /* LINUWUX_SIGSYS_H */

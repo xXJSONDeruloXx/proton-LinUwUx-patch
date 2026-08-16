@@ -194,6 +194,10 @@ static void linuwux_init(int argc, char **argv, char **envp)
 
     (void)envp;
 
+    /* Set up one optional session log before marker scanning so every
+     * descendant process can append to the same file. */
+    linuwux_debug_init_output();
+
     /* Wine: argv[0] is the loader; argv[1] is the Windows target path. */
     linuwux_game_dir_scan(argc > 1 ? argv[1] : NULL, &scan);
     is_game = scan.marker != LINUWUX_GAME_NONE;
