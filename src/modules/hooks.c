@@ -27,6 +27,7 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
@@ -86,6 +87,18 @@ static void linuwux_sigsys_wrapper(int sig, siginfo_t *info, void *uctx)
     linuwux_chain_sigsys(sig, info, uctx);
 }
 
+static int linuwux_win32u_guard_modern(void)
+{
+    static _Atomic int cached = -1;
+    int v = atomic_load(&cached);
+    if (v < 0) {
+        const char *e = getenv("LINUWUX_FORCE_WIN32U_FREE_GUARD");
+        v = (e && e[0] == '1' && e[1] == '\0') ? 1 : 0;
+        atomic_store(&cached, v);
+    }
+    return v;
+}
+
 __attribute__((visibility("default")))
 void free(void *ptr)
 {
@@ -100,7 +113,8 @@ void free(void *ptr)
     }
 
     caller = __builtin_return_address(0);
-    if (ptr && linuwux_is_game_process() && linuwux_cpuid_legacy_active() &&
+    if (ptr && linuwux_is_game_process() &&
+        (linuwux_cpuid_legacy_active() || linuwux_win32u_guard_modern()) &&
         dladdr(caller, &caller_info) && caller_info.dli_fname &&
         strstr(caller_info.dli_fname, "/win32u.so"))
         from_win32u = 1;
